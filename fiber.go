@@ -44,11 +44,18 @@ func runHub() {
 
 			//解析message为json 参数:type,market,time
 			var msg Message
-			err := json.Unmarshal([]byte(message), &msg)
+			mess, err := p.Parse(message)
 			if err != nil {
-				log.Println("error parsing JSON:", err)
+				log.Println("error parsing message:", err)
 				continue
+
 			}
+
+			msg.Type = string(mess.GetStringBytes("type"))
+			msg.Market = string(mess.GetStringBytes("market"))
+			msg.Time = string(mess.GetStringBytes("time"))
+
+			logger.Info(msg.Type)
 
 			//判断是否为订阅消息
 			if msg.Type == "subscribe" {
@@ -71,11 +78,14 @@ func runHub() {
 				//根据订阅信息分组
 				group[key] = append(group[key], connection)
 
+				//第一次连接时发送历史数据
+				//获取历史数据 最新1000条
+
 			} else if msg.Type == "unsubscribe" {
 				//获取交易对
 				market := msg.Market
 				//获取时间
-				//time := msg.Time
+				time := msg.Time
 
 				//判断是否存在该交易对
 				var marketObj Market
@@ -86,10 +96,16 @@ func runHub() {
 					continue
 				}
 
-				//key := market + "_" + time
+				key := market + "_" + time
 
 				//取消订阅 从group中删除
-				//group[key] = remove(group[key], connection)
+				for i, conn := range group[key] {
+					//如果存在则删除
+					if conn == connection {
+						group[key] = append(group[key][:i], group[key][i+1:]...)
+						break
+					}
+				}
 			}
 
 		case connection := <-unregister:
@@ -97,6 +113,26 @@ func runHub() {
 			delete(clients, connection)
 
 			log.Println("connection unregistered")
+		case data := <-subscribe:
+			logger.Info("发送订阅信息")
+			//获取交易对
+			market := data.Symbol
+			//TODO 获取时间
+			time := "1M"
+
+			groupKey := market + "_" + time
+			for _, conn := range group[groupKey] {
+				jsonData, err := json.Marshal(data)
+				if err != nil {
+					log.Println("error marshalling data:", err)
+					continue
+				}
+				err = conn.WriteMessage(websocket.TextMessage, jsonData)
+				if err != nil {
+					return
+				}
+			}
+
 		}
 	}
 }

@@ -8,6 +8,9 @@ import (
 )
 
 func SubscribeInit() {
+
+	logger.Info("开始订阅")
+
 	//3.1从数据库中获取交易分类
 
 	var marketCategory []MarketCategory

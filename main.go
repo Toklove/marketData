@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	polygonRest "github.com/polygon-io/client-go/rest"
 	"github.com/sirupsen/logrus"
+	"github.com/valyala/fastjson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"gorm.io/gorm"
 	"net/http"
@@ -22,6 +23,7 @@ var (
 	app           *fiber.App
 	wg            sync.WaitGroup
 	subscribe     chan marketData
+	p             fastjson.Parser
 )
 
 func main() {
@@ -41,8 +43,8 @@ func main() {
 	//新建一个管道用于接收订阅数据
 	subscribe = make(chan marketData)
 
-	FiberInit()
+	go FiberInit()
 
-	go SubscribeInit()
+	SubscribeInit()
 
 }
