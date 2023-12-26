@@ -21,6 +21,7 @@ var (
 	hc            http.Client
 	app           *fiber.App
 	wg            sync.WaitGroup
+	subscribe     chan marketData
 )
 
 func main() {
@@ -37,8 +38,11 @@ func main() {
 	go HistoryInit()
 	wg.Wait()
 
-	go FiberInit()
+	//新建一个管道用于接收订阅数据
+	subscribe = make(chan marketData)
 
-	SubscribeInit()
+	FiberInit()
+
+	go SubscribeInit()
 
 }

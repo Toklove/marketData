@@ -111,6 +111,9 @@ func SubscribeInit() {
 							Timestamp: out.EndTimestamp,
 							Volume:    out.Volume,
 						}
+
+						subscribe <- data
+
 						_, err := collection.InsertOne(context.Background(), data)
 						if err != nil {
 							logger.Info(err)
