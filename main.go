@@ -8,7 +8,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"gorm.io/gorm"
 	"net/http"
-	"sync"
 )
 
 var (
@@ -21,10 +20,12 @@ var (
 	restClient    *polygonRest.Client
 	hc            http.Client
 	app           *fiber.App
-	wg            sync.WaitGroup
-	subscribe     chan marketData
-	p             fastjson.Parser
+	//wg            sync.WaitGroup
+	subscribe chan MarketData
+	p         fastjson.Parser
 )
+
+var timeList = []string{"1M", "5M", "15M", "30M", "1H", "1D"}
 
 func main() {
 
@@ -35,16 +36,16 @@ func main() {
 
 	DatabaseInit()
 
-	//等待历史数据初始化完成
-	wg.Add(1)
-	go HistoryInit()
-	wg.Wait()
+	//不获取历史数据 直接订阅
+	//go HistoryInit()
 
 	//新建一个管道用于接收订阅数据
-	subscribe = make(chan marketData)
+	subscribe = make(chan MarketData)
 
-	go FiberInit()
+	go SubscribeInit()
 
-	SubscribeInit()
+	//开启N个协程 定时处理数据 处理1M 5M 15M 30M 1H 1D数据的生成
+	go HistoryDataInit()
 
+	FiberInit()
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	restModels "github.com/polygon-io/client-go/rest/models"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"os"
 	"time"
 )
@@ -16,7 +18,6 @@ func HistoryInit() {
 
 	if err == nil {
 		fmt.Println("已经初始化")
-		wg.Done()
 		return
 	}
 
@@ -57,16 +58,34 @@ func HistoryInit() {
 					logger.Info(err)
 				}
 
-				//获取三个月行情
+				//var lastTime =
+
+				colllection := db.Collection(item.Symbol)
+				//根据timestamp倒序排列
+				var data MarketData
+				colllection.FindOne(context.Background(), bson.D{}, options.FindOne().SetSort(bson.D{{"timestamp", -1}})).Decode(&data)
+
+				lastTime := time.Now()
+
+				if data.Timestamp != 0 {
+					//获取最后一条数据的时间
+					lastTime = time.Unix(data.Timestamp/1000, 0)
+				} else {
+					lastTime = time.Now().AddDate(0, 0, -7)
+				}
+
+				logger.Info("导出时间:" + lastTime.String())
+
+				//获取七天行情
 				limit := 50000
 				order := restModels.Asc
 				params := restModels.ListAggsParams{
 					Ticker:     item.SymbolHistory,
-					From:       restModels.Millis(time.Now().AddDate(0, 0, -7)),
+					From:       restModels.Millis(lastTime),
 					To:         restModels.Millis(time.Now()),
 					Order:      &order,
 					Limit:      &limit,
-					Timespan:   restModels.Minute,
+					Timespan:   restModels.Second,
 					Multiplier: 1,
 				}
 
@@ -78,16 +97,16 @@ func HistoryInit() {
 					collection := db.Collection(item.Symbol)
 
 					//根据Symbol和Timestamp判断是否存在
-					var result marketData
+					var result MarketData
 
 					//将timestamp转换为int64
 					timestamp := time.Time(out.Timestamp).Unix() * 1000
 
-					collection.FindOne(context.TODO(), marketData{Symbol: item.Symbol, Timestamp: timestamp}).Decode(&result)
+					collection.FindOne(context.TODO(), MarketData{Symbol: item.Symbol, Timestamp: timestamp}).Decode(&result)
 					//如果存在则不保存
 					if result.Symbol == "" {
 						//转换成marketData
-						var data = marketData{
+						var data = MarketData{
 							Open:      out.Open,
 							High:      out.High,
 							Low:       out.Low,
@@ -114,7 +133,6 @@ func HistoryInit() {
 
 	if arrLen == len(doneArr) {
 		os.NewFile(1, "init.lock")
-		wg.Done()
 	}
 
 }

@@ -11,7 +11,7 @@ type Market struct {
 	SymbolHistory string `gorm:"column:symbol_history"`
 }
 
-type marketData struct {
+type MarketData struct {
 	Open      float64 `json:"open"`
 	High      float64 `json:"high"`
 	Low       float64 `json:"low"`

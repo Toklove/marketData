@@ -8,10 +8,10 @@ func getCategory(name string) (polygonws.Market, polygonws.Topic) {
 
 	if name == "Cryptos" {
 		market = polygonws.Crypto
-		topic = polygonws.CryptoMinAggs
+		topic = polygonws.CryptoSecAggs
 	} else if name == "Forex" {
 		market = polygonws.Forex
-		topic = polygonws.ForexMinAggs
+		topic = polygonws.ForexSecAggs
 	} else if name == "Indices" {
 		market = polygonws.Indices
 	}

@@ -73,7 +73,13 @@ func runHub() {
 					continue
 				}
 
-				key := market + "_" + time
+				var key string
+
+				if time == "" {
+					key = market
+				} else {
+					key = market + "_" + time
+				}
 
 				//根据订阅信息分组
 				group[key] = append(group[key], connection)
@@ -96,7 +102,13 @@ func runHub() {
 					continue
 				}
 
-				key := market + "_" + time
+				var key string
+
+				if time == "" {
+					key = market
+				} else {
+					key = market + "_" + time
+				}
 
 				//取消订阅 从group中删除
 				for i, conn := range group[key] {
@@ -106,6 +118,15 @@ func runHub() {
 						break
 					}
 				}
+			} else if msg.Type == "ticker" {
+				data := fetchDataFromMongoDB(MsgDuration(msg.Time), msg.Market, msg.Market)
+				//将data转换成json字符串并发送
+				fastjson, err := json.Marshal(data)
+				if err != nil {
+					log.Println("error marshalling data:", err)
+					continue
+				}
+				connection.WriteMessage(websocket.TextMessage, fastjson)
 			}
 
 		case connection := <-unregister:
@@ -114,14 +135,10 @@ func runHub() {
 
 			log.Println("connection unregistered")
 		case data := <-subscribe:
-			logger.Info("发送订阅信息")
+			//logger.Info("发送订阅信息")
 			//获取交易对
 			market := data.Symbol
-			//TODO 获取时间
-			time := "1M"
-
-			groupKey := market + "_" + time
-			for _, conn := range group[groupKey] {
+			for _, conn := range group[market] {
 				jsonData, err := json.Marshal(data)
 				if err != nil {
 					log.Println("error marshalling data:", err)
@@ -132,7 +149,6 @@ func runHub() {
 					return
 				}
 			}
-
 		}
 	}
 }

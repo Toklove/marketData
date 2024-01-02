@@ -19,6 +19,10 @@ func SubscribeInit() {
 
 	for _, category := range marketCategory {
 
+		if category.Id == 2 || category.Id == 3 || category.Id == 4 {
+			continue
+		}
+
 		market, topic := getCategory(category.Name)
 
 		//create a new client
@@ -56,7 +60,7 @@ func SubscribeInit() {
 		//循环导出交易对
 		for _, item := range markets {
 			//判断交易对是否存在 如果不存在则创建
-			names, _ := db.ListCollectionNames(context.Background(), nil)
+			names, _ := db.ListCollectionNames(context.TODO(), nil)
 
 			has := false
 
@@ -68,14 +72,17 @@ func SubscribeInit() {
 			}
 
 			if !has {
-				err := db.CreateCollection(context.TODO(), item.Symbol)
-				if err != nil {
-					return
+				db.CreateCollection(context.Background(), item.Symbol)
+				for _, s := range timeList {
+					db.CreateCollection(context.Background(), item.Symbol+"_"+s)
 				}
 			}
 
 			tickers = append(tickers, item.Symbol)
 		}
+
+		logger.Info("订阅交易对")
+		logger.Info(tickers)
 
 		if err := c.Subscribe(topic, tickers...); err != nil {
 			logger.Fatal(err)
@@ -97,15 +104,13 @@ func SubscribeInit() {
 					collection := db.Collection(collectionName)
 
 					//根据Symbol和Timestamp判断是否存在
-					var result marketData
-					err := collection.FindOne(context.Background(), marketData{Symbol: out.Pair, Timestamp: out.EndTimestamp}).Decode(&result)
-					if err != nil {
-						logger.Info(err)
-					}
+					var result MarketData
+					collection.FindOne(context.Background(), MarketData{Symbol: out.Pair, Timestamp: out.EndTimestamp}).Decode(&result)
+
 					//如果存在则不保存
 					if result.Symbol == "" {
 						//转换成marketData
-						var data = marketData{
+						var data = MarketData{
 							Open:      out.Open,
 							High:      out.High,
 							Low:       out.Low,
