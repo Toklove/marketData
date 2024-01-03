@@ -30,7 +30,7 @@ func HistoryDataInit() {
 
 	for _, category := range marketCategory {
 
-		if category.Id == 2 || category.Id == 3 || category.Id == 4 {
+		if category.Id == 2 || category.Id == 3 {
 			continue
 		}
 
@@ -98,6 +98,10 @@ func (ts *TimeSeries) startGoroutine(symbol string, d time.Duration) {
 			// Process the data for this duration
 			marketData := ts.CalculateMarket(data)
 
+			if marketData.Open == 0 {
+				continue
+			}
+
 			_, err := db.Collection(timeSymbol).InsertOne(context.Background(), marketData)
 			if err != nil {
 				logger.Error(err)
@@ -164,6 +168,7 @@ func (ts *TimeSeries) CalculateMarket(data []MarketData) MarketData {
 	//遍历data获取最小的low
 	var low = 0.0
 	var high = 0.0
+	var vol = 0.0
 	for _, d := range data {
 		if low == 0.0 {
 			low = d.Low
@@ -178,6 +183,7 @@ func (ts *TimeSeries) CalculateMarket(data []MarketData) MarketData {
 		if d.High > high {
 			high = d.High
 		}
+		vol += d.Volume
 	}
 
 	market := MarketData{
@@ -186,7 +192,7 @@ func (ts *TimeSeries) CalculateMarket(data []MarketData) MarketData {
 		Low:       low,
 		Close:     data[len(data)-1].Close,
 		Timestamp: data[len(data)-1].Timestamp,
-		Volume:    data[len(data)-1].Volume,
+		Volume:    vol,
 		Symbol:    data[len(data)-1].Symbol,
 	}
 

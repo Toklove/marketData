@@ -133,6 +133,16 @@ func runHub() {
 			// Remove the client from the hub
 			delete(clients, connection)
 
+			//遍历全部组 删除该客户端
+			for key, conns := range group {
+				for i, conn := range conns {
+					if conn == connection {
+						group[key] = append(group[key][:i], group[key][i+1:]...)
+						break
+					}
+				}
+			}
+
 			log.Println("connection unregistered")
 		case data := <-subscribe:
 			//logger.Info("发送订阅信息")
@@ -171,7 +181,10 @@ func FiberInit() {
 		// When the function returns, unregister the client and close the connection
 		defer func() {
 			unregister <- c
-			c.Close()
+			err := c.Close()
+			if err != nil {
+				logger.Error(err)
+			}
 		}()
 
 		// Register the client
