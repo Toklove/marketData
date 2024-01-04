@@ -9,47 +9,49 @@ import (
 	"github.com/polygon-io/client-go/websocket/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"net/url"
+	"sync"
 	"time"
 )
 
-func SubscribeInit() {
+var dbMutex sync.Mutex
 
+func SubscribeInit() {
 	logger.Info("开始订阅")
 
 	//3.1从数据库中获取交易分类
-
 	var marketCategory []MarketCategory
-
 	mysqlDb.Table("market_categories").Find(&marketCategory)
 
+	var wg sync.WaitGroup
 	for _, category := range marketCategory {
+		wg.Add(1)
 		if category.Id == 2 || category.Id == 3 {
-			go GetDataByGoMarket(category)
-			continue
+			go func(category MarketCategory) {
+				defer wg.Done()
+				go GetDataByGoMarket(category)
+			}(category)
+		} else {
+			go func(category MarketCategory) {
+				defer wg.Done()
+				go GetDataByCategory(category)
+			}(category)
 		}
-		go GetDataByCategory(category)
 	}
+	wg.Wait()
 }
 
 func GetDataByGoMarket(category MarketCategory) {
 	// TODO 寻找数据接口
-
 	logger.Info("从gomarket获取数据")
-
-	//建立WebSocket连接 wss://api.gomarketes.com:8282/ 并自动短线重连
-	u := url.URL{Scheme: "wss", Host: "api.gomarketes.com:8282"}
-
 	//获取交易对
 	var markets []Market
-
 	mysqlDb.Table("markets").Where("category_id = ?", category.Id).Find(&markets)
 
 	if len(markets) == 0 {
 		return
 	}
 
-	tickers := make([]string, len(markets))
+	tickers := make([]string, 0)
 
 	//循环导出交易对
 	for _, item := range markets {
@@ -66,58 +68,71 @@ func GetDataByGoMarket(category MarketCategory) {
 		}
 
 		if !has {
-			db.CreateCollection(context.Background(), item.Symbol)
+			db.CreateCollection(context.TODO(), item.Symbol)
 			for _, s := range timeList {
-				db.CreateCollection(context.Background(), item.Symbol+"_"+s)
+				db.CreateCollection(context.TODO(), item.Symbol+"_"+s)
 			}
 		}
 
 		tickers = append(tickers, item.Symbol)
 	}
 
+	logger.Info("订阅交易对")
+	logger.Info(tickers)
+
 	//将市场Market拼接成{"symbol":"XAGUSD.XAUUSD.XPDUSD.UKOIL.NATGAS.USOIL","type":"price","language":"en_US"}
 	var market string
 	for _, item := range tickers {
 		market += item + "."
 	}
+
 	market = market[:len(market)-1]
 	var subscribeMsg = fmt.Sprintf(`{"symbol":"%s","type":"price","language":"en_US"}`, market)
-
-	logger.Info("订阅信息")
-	logger.Info(subscribeMsg)
-	logger.Info("订阅信息")
 
 	var conn *websocket.Conn
 	var err error
 
 	for {
-		conn, _, err = websocket.DefaultDialer.Dial(u.String(), nil)
+		// 使用带有自定义头部的Dialer来建立WebSocket连接
+		conn, _, err = websocket.DefaultDialer.Dial("wss://api.gomarketes.com:8282", nil)
+		//定时重启websocket服务,建立新的连接 成功订阅之后断开旧的
 		if err != nil {
+			// 处理错误
 			logger.Println("dial:", err)
+			//time.Sleep(time.Second * 5)
 			continue
 		}
 
-		conn.WriteMessage(websocket.TextMessage, []byte(subscribeMsg))
-
-		//设置定时任务 每隔30秒发送一次心跳 {"type":"heartbeat","msg":"ping"}
+		err = conn.WriteMessage(websocket.TextMessage, []byte(subscribeMsg))
+		if err != nil {
+			logger.Error("write:", err)
+		}
 		go func() {
-			for {
-				time.Sleep(time.Second * 30)
-				conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"heartbeat","msg":"ping"}`))
+			// 创建一个定时器，每隔30秒就向tick通道发送当前的时间
+			tick := time.Tick(30 * time.Second)
+
+			for range tick {
+				logger.Info("发送心跳")
+
+				// 每隔30秒发送一次心跳
+				err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"heartbeat","msg":"ping"}`))
+				if err != nil {
+					logger.Error("write:", err)
+					continue
+				}
 			}
 		}()
-
 		break
 	}
 
-	defer conn.Close()
-
 	for {
 		_, message, err := conn.ReadMessage()
+
 		if err != nil {
 			logger.Println("read:", err)
 			continue
 		}
+
 		//接收信息并解析成数组
 		var data []GoMarketData
 		err = json.Unmarshal(message, &data)
@@ -150,7 +165,6 @@ func GetDataByGoMarket(category MarketCategory) {
 			collection := db.Collection(item.Symbol)
 
 			//根据Symbol和Timestamp判断是否存在
-
 			timestamp := item.T * 1000
 
 			var result MarketData
@@ -169,20 +183,22 @@ func GetDataByGoMarket(category MarketCategory) {
 					Volume:    float64(item.Vol),
 				}
 
+				dbMutex.Lock()
 				_, err = collection.InsertOne(context.TODO(), data)
+				dbMutex.Unlock()
 				if err != nil {
 					logger.Info(err)
 				}
 
 				//将数据发送到订阅中
 				subscribe <- data
+				updateSubscribe <- data
 			}
 		}
 	}
 }
 
 func GetDataByCategory(category MarketCategory) {
-
 	market, topic := getCategory(category.Name)
 
 	//create a new client
@@ -217,7 +233,7 @@ func GetDataByCategory(category MarketCategory) {
 		return
 	}
 
-	tickers := make([]string, len(markets))
+	tickers := make([]string, 0)
 
 	//循环导出交易对
 	for _, item := range markets {
@@ -242,9 +258,6 @@ func GetDataByCategory(category MarketCategory) {
 
 		tickers = append(tickers, item.Symbol)
 	}
-
-	logger.Info("订阅交易对")
-	logger.Info(tickers)
 
 	if err := c.Subscribe(topic, tickers...); err != nil {
 		logger.Info(err)
@@ -335,13 +348,16 @@ func GetDataByCategory(category MarketCategory) {
 						Volume:    out.Volume,
 					}
 
-					_, err = collection.InsertOne(context.Background(), data)
+					dbMutex.Lock()
+					_, err = collection.InsertOne(context.TODO(), data)
+					dbMutex.Unlock()
 					if err != nil {
 						logger.Info(err)
 					}
 
 					//将数据发送到订阅中
 					subscribe <- data
+					updateSubscribe <- data
 				}
 			}
 		}

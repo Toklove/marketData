@@ -21,8 +21,9 @@ var (
 	hc            http.Client
 	app           *fiber.App
 	//wg            sync.WaitGroup
-	subscribe chan MarketData
-	p         fastjson.Parser
+	subscribe       chan MarketData
+	updateSubscribe chan MarketData
+	p               fastjson.Parser
 )
 
 var timeList = []string{"1M", "5M", "15M", "30M", "1H", "1D"}
@@ -41,6 +42,7 @@ func main() {
 
 	//新建一个管道用于接收订阅数据
 	subscribe = make(chan MarketData)
+	updateSubscribe = make(chan MarketData)
 
 	go SubscribeInit()
 

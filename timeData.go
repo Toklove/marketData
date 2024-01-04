@@ -4,24 +4,10 @@ import (
 	"context"
 	"fmt"
 	"go.mongodb.org/mongo-driver/bson"
-	"sync"
 	"time"
 )
 
-type TimeSeries struct {
-	mu sync.Mutex
-	md map[time.Duration][]MarketData
-}
-
 func HistoryDataInit() {
-	intervals := []time.Duration{
-		1 * time.Minute,
-		5 * time.Minute,
-		15 * time.Minute,
-		30 * time.Minute,
-		1 * time.Hour,
-		24 * time.Hour,
-	}
 
 	var marketCategory []MarketCategory
 	var markets []Market
@@ -30,18 +16,10 @@ func HistoryDataInit() {
 
 	for _, category := range marketCategory {
 
-		if category.Id == 2 || category.Id == 3 {
-			continue
-		}
-
 		mysqlDb.Table("markets").Where("category_id = ?", category.Id).Find(&markets)
 
-		ts := &TimeSeries{}
-
 		for _, item := range markets {
-			for _, interval := range intervals {
-				go ts.startGoroutine(item.Symbol, interval)
-			}
+			go startGoroutine(item.Symbol)
 		}
 	}
 
@@ -82,33 +60,81 @@ func MsgDuration(t string) time.Duration {
 	}
 }
 
-func (ts *TimeSeries) startGoroutine(symbol string, d time.Duration) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+func aggregateData(secondData []MarketData, duration time.Duration) map[int64]*MarketData {
+	aggregatedData := make(map[int64]*MarketData)
+
+	for _, data := range secondData {
+		dataTime := time.Unix(0, data.Timestamp*int64(time.Millisecond))
+		roundedTime := dataTime.Truncate(duration)
+
+		if _, ok := aggregatedData[roundedTime.UnixMilli()]; !ok {
+			aggregatedData[roundedTime.UnixMilli()] = &MarketData{Timestamp: roundedTime.UnixMilli(), Open: data.Open, High: data.High, Low: data.Low, Close: data.Close, Symbol: data.Symbol, Volume: data.Volume}
+		} else {
+			if data.High > aggregatedData[roundedTime.UnixMilli()].High {
+				aggregatedData[roundedTime.UnixMilli()].High = data.High
+			}
+			if data.Low < aggregatedData[roundedTime.UnixMilli()].Low {
+				aggregatedData[roundedTime.UnixMilli()].Low = data.Low
+			}
+			aggregatedData[roundedTime.UnixMilli()].Close = data.Close
+			aggregatedData[roundedTime.UnixMilli()].Volume += data.Volume
+		}
+	}
+
+	return aggregatedData
+}
+
+func createMatrix(durations []time.Duration) map[time.Duration][]int64 {
+	matrix := make(map[time.Duration][]int64)
+
+	for _, duration := range durations {
+		var timeStamps []int64
+		for t := time.Now().Truncate(24 * time.Hour); t.Before(time.Now().Add(24 * time.Hour)); t = t.Add(duration) {
+			timeStamps = append(timeStamps, t.UnixMilli())
+		}
+		matrix[duration] = timeStamps
+	}
+
+	return matrix
+}
+
+func startGoroutine(symbol string) {
+
+	//var timeSymbol = symbol + "_" + formatDuration(d)
+
+	// Simulate second-level market data
+	var secondData []MarketData
 
 	for {
 		select {
-		case <-ticker.C:
-
-			var timeSymbol = symbol + "_" + formatDuration(d)
-
-			// Fetch data from MongoDB
-			data := fetchDataFromMongoDB(d, symbol, timeSymbol)
-
-			// Process the data for this duration
-			marketData := ts.CalculateMarket(data)
-
-			if marketData.Open == 0 {
+		case data := <-updateSubscribe:
+			if data.Symbol != symbol {
 				continue
 			}
 
-			_, err := db.Collection(timeSymbol).InsertOne(context.Background(), marketData)
-			if err != nil {
-				logger.Error(err)
-			}
+			// Process the data for this duration
+			durations := []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute, time.Hour, 24 * time.Hour}
+			matrix := createMatrix(durations)
 
-			// Send the processed data to the channel
-			subscribe <- marketData
+			// Generate a new data point
+			secondData = append(secondData, data)
+
+			// Aggregate the data for each duration
+			for _, duration := range durations {
+				aggregatedData := aggregateData(secondData, duration)
+
+				// Print the aggregated data for the current time stamp in the matrix
+				for _, timeStamp := range matrix[duration] {
+					if _, ok := aggregatedData[timeStamp]; ok {
+						//将duration转换为 1M 5M格式
+						result := *aggregatedData[timeStamp]
+						timeSymbol := result.Symbol + "_" + formatDuration(duration)
+						result.Symbol = timeSymbol
+						fmt.Printf("Aggregated data for duration %v and time stamp %v: %v\n", formatDuration(duration), timeStamp, result)
+						subscribe <- result
+					}
+				}
+			}
 		}
 	}
 }
@@ -155,55 +181,4 @@ func fetchDataFromMongoDB(d time.Duration, symbol string, timeSymbol string) []M
 	}
 
 	return result
-}
-
-func (ts *TimeSeries) CalculateMarket(data []MarketData) MarketData {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
-	if len(data) == 0 {
-		return MarketData{}
-	}
-
-	//遍历data获取最小的low
-	var low = 0.0
-	var high = 0.0
-	var vol = 0.0
-	for _, d := range data {
-		if low == 0.0 {
-			low = d.Low
-		}
-
-		if high == 0.0 {
-			high = d.High
-		}
-		if d.Low < low {
-			low = d.Low
-		}
-		if d.High > high {
-			high = d.High
-		}
-		vol += d.Volume
-	}
-
-	market := MarketData{
-		Open:      data[0].Open,
-		High:      high,
-		Low:       low,
-		Close:     data[len(data)-1].Close,
-		Timestamp: data[len(data)-1].Timestamp,
-		Volume:    vol,
-		Symbol:    data[len(data)-1].Symbol,
-	}
-
-	for _, d := range data[1:] {
-		if d.High > market.High {
-			market.High = d.High
-		}
-		if d.Low < market.Low {
-			market.Low = d.Low
-		}
-	}
-
-	return market
 }

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"log"
 	"sync"
 )
@@ -81,11 +84,38 @@ func runHub() {
 					key = market + "_" + time
 				}
 
-				//根据订阅信息分组
-				group[key] = append(group[key], connection)
+				// Check if the client is already in the group
+				found := false
+				for _, conn := range group[key] {
+					if conn == connection {
+						found = true
+						break
+					}
+				}
 
-				//第一次连接时发送历史数据
-				//获取历史数据 最新1000条
+				// If the client is not in the group, add it
+				if !found {
+					group[key] = append(group[key], connection)
+				}
+
+				//订阅之后发送最新数据给他 获取当前Symbol最后一条数据
+				collection := db.Collection(msg.Market)
+				// 创建一个查询条件，表示按照 "_id" 字段倒序排序
+				opts := options.FindOne().SetSort(bson.D{{"timestamp", -1}})
+
+				var result MarketData
+				err := collection.FindOne(context.Background(), bson.D{{}}, opts).Decode(&result)
+				if err != nil {
+					// 处理错误
+					log.Println(err)
+				}
+				//将data转换成json字符串并发送
+				fastjson, err := json.Marshal(result)
+				if err != nil {
+					logger.Println("error marshalling data:", err)
+					continue
+				}
+				connection.WriteMessage(websocket.TextMessage, fastjson)
 
 			} else if msg.Type == "unsubscribe" {
 				//获取交易对
@@ -133,7 +163,7 @@ func runHub() {
 			// Remove the client from the hub
 			delete(clients, connection)
 
-			//遍历全部组 删除该客户端
+			// Remove the client from all groups
 			for key, conns := range group {
 				for i, conn := range conns {
 					if conn == connection {
